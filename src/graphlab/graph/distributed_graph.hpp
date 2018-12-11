@@ -77,6 +77,7 @@
 #include <graphlab/graph/ingress/distributed_ingress_base.hpp>
 #include <graphlab/graph/ingress/distributed_oblivious_ingress.hpp>
 #include <graphlab/graph/ingress/distributed_hdrf_ingress.hpp>
+#include <graphlab/graph/ingress/distributed_swr_ingress.hpp>
 #include <graphlab/graph/ingress/distributed_random_ingress.hpp>
 #include <graphlab/graph/ingress/distributed_identity_ingress.hpp>
 
@@ -409,6 +410,7 @@ namespace graphlab {
     friend class distributed_identity_ingress<VertexData, EdgeData>;
     friend class distributed_oblivious_ingress<VertexData, EdgeData>;
     friend class distributed_hdrf_ingress<VertexData, EdgeData>;
+    friend class distributed_swr_ingress<VertexData, EdgeData>;
     friend class distributed_constrained_random_ingress<VertexData, EdgeData>;
 
     typedef graphlab::vertex_id_type vertex_id_type;
@@ -2207,7 +2209,9 @@ namespace graphlab {
           // Using gzip filter
           if (gzip) fin.push(boost::iostreams::gzip_decompressor());
           fin.push(in_file);
-          const bool success = load_from_stream(graph_files[i], fin, line_parser);
+          // 如果需要使用swr算法加载，则需要修改为
+          const bool success = swr_load_from_stream(graph_files[i], fin, line_parser);
+          // const bool success = load_from_stream(graph_files[i], fin, line_parser);
           if(!success) {
             logstream(LOG_FATAL)
               << "\n\tError parsing file: " << graph_files[i] << std::endl;
@@ -2257,6 +2261,8 @@ namespace graphlab {
           boost::iostreams::filtering_stream<boost::iostreams::input> fin;
           if(gzip) fin.push(boost::iostreams::gzip_decompressor());
           fin.push(in_file);
+          // 如果需要使用swr算法加载，则需要修改为
+          // const bool success = swr_load_from_stream(graph_files[i], fin, line_parser);
           const bool success = load_from_stream(graph_files[i], fin, line_parser);
           if(!success) {
             logstream(LOG_FATAL)
@@ -3187,6 +3193,10 @@ namespace graphlab {
         if (rpc.procid() == 0) logstream(LOG_EMPH) << "Use hdrf oblivious ingress, usehash: " << usehash
           << ", userecent: " << userecent << std::endl;
         ingress_ptr = new distributed_hdrf_ingress<VertexData, EdgeData>(rpc.dc(), *this, usehash, userecent);
+      } else if (method == "swr") {
+        if (rpc.procid() == 0) logstream(LOG_EMPH) << "Use swr oblivious ingress, usehash: " << usehash
+          << ", userecent: " << userecent << std::endl;
+        ingress_ptr = new distributed_swr_ingress<VertexData, EdgeData>(rpc.dc(), *this, usehash, userecent);
       } else if  (method == "random") {
         if (rpc.procid() == 0)logstream(LOG_EMPH) << "Use random ingress" << std::endl;
         ingress_ptr = new distributed_random_ingress<VertexData, EdgeData>(rpc.dc(), *this); 
@@ -3251,6 +3261,58 @@ namespace graphlab {
           ti.start();
         }
       }
+      return true;
+    } // end of load from stream
+
+    /**
+       \internal
+       This internal function is used to load a single line from an input stream
+       用于实现swr算法中的窗口缓存
+     */
+    template<typename Fstream>
+    bool swr_load_from_stream(std::string filename, Fstream& fin,
+                          line_parser_type& line_parser) {
+      size_t linecount = 0;
+      timer ti; 
+      ti.start();
+
+      std::vector<std::string> winBuffer;
+      size_t winSize = 0; 
+
+      while(fin.good() && !fin.eof()) {
+        std::string line;
+        std::getline(fin, line);
+        if(line.empty()) continue;
+        if(fin.fail()) break;
+
+        // 在这儿增加窗口，给定窗口大小为10000
+        winBuffer.push_back(line);
+        winSize++;
+        if(winSize < 10000 && !fin.eof())
+          continue;
+        else{
+          winSize = winBuffer.size();
+          std::random_shuffle(winBuffer.begin(), winBuffer.end());
+          for(size_t i = 0; i < winSize; i++){
+            line = winBuffer[i];
+            const bool success = line_parser(*this, filename, line);
+            if (!success) {
+              logstream(LOG_WARNING)
+                << "Error parsing line " << linecount << " in "
+                << filename << ": " << std::endl
+                << "\t\"" << line << "\"" << std::endl;
+              return false;
+            }
+            ++linecount;
+            if (ti.current_time() > 5.0) {
+              logstream(LOG_INFO) << linecount << " Lines read" << std::endl;
+              ti.start();
+            }
+          }
+        }
+        winBuffer.clear();
+        winSize = 0;
+      }  
       return true;
     } // end of load from stream
 

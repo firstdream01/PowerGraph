@@ -259,6 +259,133 @@ namespace graphlab {
         ++dst_true_degree;
         return best_proc;
      };
+
+     /** SWR greedy assign (source, target) to a machine using: 
+      *  bitset<MAX_MACHINE> src_degree : the degree presence of source over machines
+      *  bitset<MAX_MACHINE> dst_degree : the degree presence of target over machines
+      *  size_t              src_true_degree : the degree of source vertex over machines
+      *  size_t              dst_true_degree : the degree of target vertex over machines
+      *  vector<size_t>      proc_num_edges : the edge counts over machines
+      *
+      * */
+     procid_t edge_to_proc_swr (const vertex_id_type source, 
+          const vertex_id_type target,
+          bin_counts_type& src_degree,
+          bin_counts_type& dst_degree,
+          size_t& src_true_degree,
+          size_t& dst_true_degree,
+          std::vector<size_t>& proc_num_edges,
+          bool usehash = false,
+          bool userecent = false) {
+        
+        size_t numprocs = proc_num_edges.size();
+        
+        bin_counts_type intersection = src_degree;
+        intersection &= dst_degree;
+        bin_counts_type convergence = src_degree;
+        convergence |= dst_degree;
+
+        
+        size_t degree_u = src_true_degree;
+        degree_u = degree_u +1;
+        size_t degree_v = dst_true_degree;
+        degree_v = degree_v +1;
+
+        procid_t best_proc = -1;
+        if(src_degree.empty() && dst_degree.empty()){
+          for(size_t i = 0; i < numprocs; i++){
+            if(best_proc == -1){
+              best_proc = i;
+              continue;
+            }
+            if(proc_num_edges[i] < proc_num_edges[best_proc]){
+              best_proc = i;
+            }
+          }
+        }
+        else if(!src_degree.empty() && dst_degree.empty()){
+          for(size_t i = 0; i < numprocs; i++){
+            if(src_degree.get(i)){
+              if(best_proc == -1){
+                best_proc = i;
+                continue;
+              }
+              if(proc_num_edges[i] < proc_num_edges[best_proc]){
+                best_proc = i;
+              }
+            }
+          }
+        }
+        else if(src_degree.empty() && !dst_degree.empty()){
+          for(size_t i = 0; i < numprocs; i++){
+            if(dst_degree.get(i)){
+              if(best_proc == -1){
+                best_proc = i;
+                continue;
+              }
+              if(proc_num_edges[i] < proc_num_edges[best_proc]){
+                best_proc = i;
+              }
+            }
+          }
+        }
+        else{
+          if(!intersection.empty()){
+            for(size_t i = 0; i < numprocs; i++){
+              if(intersection.get(i)){
+                if(best_proc == -1){
+                  best_proc = i;
+                  continue;
+                }
+                if(proc_num_edges[i] < proc_num_edges[best_proc]){
+                  best_proc = i;
+                }
+              }
+            }
+          }
+          else{
+            if(degree_u > degree_v){
+              for(size_t i = 0; i < numprocs; i++){
+                if(dst_degree.get(i)){
+                  if(best_proc == -1){
+                    best_proc = i;
+                    continue;
+                  }
+                  if(proc_num_edges[i] < proc_num_edges[best_proc]){
+                    best_proc = i;
+                  }
+                }
+              }
+            }
+            else{
+              for(size_t i = 0; i < numprocs; i++){
+                if(src_degree.get(i)){
+                  if(best_proc == -1){
+                    best_proc = i;
+                    continue;
+                  }
+                  if(proc_num_edges[i] < proc_num_edges[best_proc]){
+                    best_proc = i;
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        ASSERT_LT(best_proc, numprocs);
+        if (userecent) {
+          src_degree.clear();
+          dst_degree.clear();
+        }
+        src_degree.set_bit(best_proc);
+        dst_degree.set_bit(best_proc);
+        ++proc_num_edges[best_proc];
+        ++src_true_degree;
+        ++dst_true_degree;
+        return best_proc;
+     };
+
   };// end of ingress_edge_decision
 }
 
